@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { MessageSquare, Wand2, Copy, CheckCircle, AlertCircle, Settings } from 'lucide-react';
+import { MessageSquare, Wand2, Copy, CheckCircle, AlertCircle, Settings, Timer } from 'lucide-react';
 import PostGenerator from './components/PostGenerator';
 import PostCard from './components/PostCard';
 import QuantitySelector from './components/QuantitySelector';
@@ -20,6 +20,11 @@ function App() {
   const [showApiModal, setShowApiModal] = useState(false);
   const [error, setError] = useState('');
 
+  // NEW: Token/latency/cost state
+  const [lastLatency, setLastLatency] = useState<number | null>(null);
+  const [lastTokens, setLastTokens] = useState<{prompt: number; completion: number; total: number} | null>(null);
+  const [lastCost, setLastCost] = useState<number | null>(null);
+
   const handleGenerate = async (topic: string, postType: string) => {
     if (!apiKey.trim()) {
       setShowApiModal(true);
@@ -31,7 +36,12 @@ function App() {
 
     try {
       const newPosts: GeneratedPost[] = [];
-      
+      const startTime = Date.now();
+
+      let totalPromptTokens = 0;
+      let totalCompletionTokens = 0;
+      let totalTokens = 0;
+
       for (let i = 0; i < postQuantity; i++) {
         const response = await fetch('https://api.openai.com/v1/chat/completions', {
           method: 'POST',
@@ -63,6 +73,13 @@ function App() {
         const data = await response.json();
         const content = data.choices[0]?.message?.content || 'Failed to generate content';
 
+        // Collect token usage info if available
+        if (data.usage) {
+          totalPromptTokens += data.usage.prompt_tokens || 0;
+          totalCompletionTokens += data.usage.completion_tokens || 0;
+          totalTokens += data.usage.total_tokens || 0;
+        }
+
         newPosts.push({
           id: `post-${Date.now()}-${i}`,
           content,
@@ -70,6 +87,15 @@ function App() {
           timestamp: Date.now() + i
         });
       }
+
+      // Calculate latency + cost
+      const endTime = Date.now();
+      setLastLatency(endTime - startTime);
+      setLastTokens({ prompt: totalPromptTokens, completion: totalCompletionTokens, total: totalTokens });
+
+      // Rough cost (USD): input $0.0005/1k tokens, output $0.0015/1k tokens (gpt-3.5-turbo)
+      const estimatedCost = (totalPromptTokens * 0.0005 + totalCompletionTokens * 0.0015) / 1000;
+      setLastCost(estimatedCost);
 
       setPosts(prevPosts => [...newPosts, ...prevPosts]);
     } catch (err: any) {
@@ -81,6 +107,9 @@ function App() {
 
   const clearPosts = () => {
     setPosts([]);
+    setLastLatency(null);
+    setLastTokens(null);
+    setLastCost(null);
   };
 
   return (
@@ -99,8 +128,8 @@ function App() {
               onClick={() => setShowApiModal(true)}
               className="flex items-center space-x-2 px-4 py-2 text-sm font-medium text-gray-700 hover:text-gray-900 transition-colors"
             >
-              <Settings className="w-4 h-4" />
-              <span>API Settings</span>
+             
+             
             </button>
           </div>
         </div>
@@ -146,6 +175,26 @@ function App() {
                   <span className="text-gray-600">Next Batch</span>
                   <span className="font-semibold text-blue-600">{postQuantity}</span>
                 </div>
+                {/* NEW: Show latency and token info */}
+                {lastLatency !== null && (
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-600">Last Gen Time</span>
+                    <span className="font-medium">{(lastLatency / 1000).toFixed(2)}s</span>
+                  </div>
+                )}
+                {lastTokens && (
+                  <div className="text-xs text-gray-500 space-y-1">
+                    <div>Prompt tokens: {lastTokens.prompt}</div>
+                    <div>Completion tokens: {lastTokens.completion}</div>
+                    <div>Total tokens: {lastTokens.total}</div>
+                  </div>
+                )}
+                {lastCost !== null && (
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-600">Est. Cost</span>
+                    <span className="font-medium">${lastCost.toFixed(5)}</span>
+                  </div>
+                )}
               </div>
               {posts.length > 0 && (
                 <button
